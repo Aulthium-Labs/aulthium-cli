@@ -23,8 +23,8 @@ unset _utf8_probe _loc
 # Talks to either OpenRouter or Google AI Studio, chosen via 'a> provider'.
 # Conversation stays in memory only while the process is running.
 
-APP_NAME="Aulthium CLI"
-APP_VERSION="v1.0.5"
+APP_NAME="Aulthium AI"
+APP_VERSION="v1.0.0"
 OPENROUTER_URL="https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS_URL="https://openrouter.ai/api/v1/models"
 GOOGLE_API_BASE="https://generativelanguage.googleapis.com/v1beta"
