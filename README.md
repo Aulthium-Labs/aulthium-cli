@@ -57,7 +57,7 @@ https://github.com/user-attachments/assets/4135e436-9359-432f-b2bb-94c279adcdfb
 Run Aulthium with a single command:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/d3stiny-io/aulthium/main/aulthium.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/d3stiny-io/aulthium-cli/main/aulthium-cli.sh)
 ```
 
 Then configure your AI provider and start working. That's it.
