@@ -9,12 +9,21 @@ set -u
 # on disk to replace.
 SELF_SCRIPT_PATH="$(realpath -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null || true)"
 
+_utf8_probe="—"
+if (( ${#_utf8_probe} != 1 )); then
+  for _loc in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8 en_GB.UTF-8; do
+    export LC_ALL="$_loc"
+    (( ${#_utf8_probe} == 1 )) && break
+  done
+fi
+unset _utf8_probe _loc
+
 # AULTHIUM
 # Single-file Bash terminal AI client for Termux / Linux
 # Talks to either OpenRouter or Google AI Studio, chosen via 'a> provider'.
 # Conversation stays in memory only while the process is running.
 
-APP_NAME="AULTHIUM"
+APP_NAME="Aulthium CLI"
 APP_VERSION="v1.0.5"
 OPENROUTER_URL="https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODELS_URL="https://openrouter.ai/api/v1/models"
@@ -205,7 +214,7 @@ PLUGIN_INSTALL_SOURCE_REPO=""
 # "mode": "hook" (e.g. better-websearch) instead of the default foreground
 # one (e.g. webchat). A hook plugin doesn't take over the terminal when
 # run: `a> plugin run <name>` just registers it here and hands control
-# straight back to the normal "User>" prompt. It's invoked on-demand,
+# straight back to the normal "You>" prompt. It's invoked on-demand,
 # per call, at whatever hook point its manifest names — see
 # KNOWN_HOOK_POINTS below for the full list — instead of running
 # continuously as a background process.
@@ -377,7 +386,7 @@ plugin_hook_call() {
 # We keep the system prompt in the history from the start.
 build_system_prompt() {
   cat <<EOF
-You are Aulthium, a helpful terminal-based AI assistant. Answer clearly and concisely. Be practical, friendly, and accurate.
+You are Aulthium CLI, a helpful terminal-based AI assistant. Answer clearly and concisely. Be practical, friendly, and accurate.
 
 You operate on a single sandbox folder: $WORKSPACE_DIR
 Every path you reference in a marker below MUST be a relative path inside that folder. Never use absolute paths, and never use ".." to escape it.
@@ -672,12 +681,38 @@ need_cmd() {
 C_RESET=$'\033[0m'
 C_BOLD=$'\033[1m'
 C_DIM=$'\033[2m'
-C_ACCENT=$'\033[1;36m'    # cyan    — brand, headers, agent's spoken replies
-C_ACCENT2=$'\033[1;35m'   # magenta — tool/action activity
+# Orange theme, matched to the Aulthium logo (copper-orange glow on black).
+# Truecolor when the terminal advertises it, 256-color otherwise (Termux
+# supports both). Green ok / red error stay as-is on purpose so success and
+# failure remain distinguishable against the orange accents.
+case "${COLORTERM:-}" in
+  *truecolor*|*24bit*)
+    C_ACCENT=$'\033[1;38;2;240;140;60m'     # bright orange — brand, headers, agent replies
+    C_ACCENT2=$'\033[1;38;2;205;110;40m'    # copper        — tool/action activity
+    C_WARN=$'\033[1;38;2;255;185;70m'       # amber         — caution
+    C_MUTED=$'\033[38;2;165;120;85m'        # warm tan      — secondary text, paths, meta
+    C_GLOW_1=$'\033[1;38;2;255;190;110m'    # banner gradient, light -> deep
+    C_GLOW_2=$'\033[1;38;2;250;165;85m'
+    C_GLOW_3=$'\033[1;38;2;240;140;60m'
+    C_GLOW_4=$'\033[1;38;2;225;120;45m'
+    C_GLOW_5=$'\033[1;38;2;205;100;35m'
+    C_GLOW_6=$'\033[1;38;2;180;85;30m'
+    ;;
+  *)
+    C_ACCENT=$'\033[1;38;5;208m'
+    C_ACCENT2=$'\033[1;38;5;166m'
+    C_WARN=$'\033[1;38;5;214m'
+    C_MUTED=$'\033[38;5;137m'
+    C_GLOW_1=$'\033[1;38;5;222m'
+    C_GLOW_2=$'\033[1;38;5;215m'
+    C_GLOW_3=$'\033[1;38;5;208m'
+    C_GLOW_4=$'\033[1;38;5;202m'
+    C_GLOW_5=$'\033[1;38;5;166m'
+    C_GLOW_6=$'\033[1;38;5;130m'
+    ;;
+esac
 C_OK=$'\033[1;32m'        # green   — success
-C_WARN=$'\033[1;33m'      # yellow  — caution
 C_ERR=$'\033[1;31m'       # red     — failure / danger
-C_MUTED=$'\033[2;37m'     # dim     — secondary text, paths, meta
 
 # ── Iconography ────────────────────────────────────────────────────────────
 # One glyph per action type, used everywhere that action is shown so the eye
@@ -693,10 +728,10 @@ ICON_FOLDER="+"   # creating a folder
 ICON_MOVE="⇒"     # moving/renaming a file or folder
 ICON_SHELL="❯"    # running a shell command
 ICON_SEARCH="⌕"   # web search
-ICON_MCP="⚡"      # MCP server tool call
+ICON_MCP="◆"      # MCP server tool call
 ICON_NET="↯"      # HTTP request / download
 ICON_UNDO="↺"     # undo/redo
-ICON_PLUGIN="▶"   # plugin activity
+ICON_PLUGIN="◇"   # plugin activity
 ICON_OK="✓"
 ICON_WARN="⚠"
 ICON_ERR="✗"
@@ -721,17 +756,114 @@ muted() {
   printf "${C_MUTED}%s${C_RESET}\n" "$*" >&2
 }
 
-# A single 48-char rule used to build boxed section headers/footers of a
-# consistent width, regardless of title length.
-RULE_LINE="────────────────────────────────────────────────"
+BOX_COLORS=0
+BOX_W=""
+WRAP_LINES=()
+PLAIN=""
 
-# box_top "TITLE" "$ICON" "$COLOR" — opens a labeled section, e.g.:
-#   ┌─ ▸ FILE READ ──────────────────────────────
-# Appends the full rule after the label rather than padding to an exact
-# total width — computing that padding via byte-offset substring slicing
-# breaks multi-byte icons under a non-UTF-8 locale (common on minimal
-# Termux/Linux installs), so this trades pixel-perfect alignment for
-# correctness everywhere.
+box_measure() {
+  local cols
+  cols="$({ stty size </dev/tty; } 2>/dev/null)"
+  cols="${cols##* }"
+  [[ "$cols" =~ ^[0-9]+$ && "$cols" -gt 0 ]] || cols="$(tput cols 2>/dev/null)"
+  [[ "$cols" =~ ^[0-9]+$ && "$cols" -gt 0 ]] || cols="${COLUMNS:-80}"
+  [[ "$cols" =~ ^[0-9]+$ && "$cols" -gt 0 ]] || cols=80
+  (( cols > 100 )) && cols=100
+  (( cols < 24 )) && cols=24
+  BOX_W=$(( cols - 1 ))
+}
+
+box_width() {
+  box_measure
+  printf '%s' "$BOX_W"
+}
+
+_rule() {
+  local n="$1" s
+  (( n < 0 )) && n=0
+  printf -v s '%*s' "$n" ''
+  printf '%s' "${s// /─}"
+}
+
+_plain() {
+  local s="$1" esc=$'\033' out=""
+  while [[ "$s" == *"$esc["* ]]; do
+    out+="${s%%"$esc["*}"
+    s="${s#*"$esc["}"
+    s="${s#*[a-zA-Z]}"
+  done
+  PLAIN="$out$s"
+}
+
+_wrap() {
+  local text="$1" width="$2" seg cut head
+  WRAP_LINES=()
+  (( width < 1 )) && width=1
+  text="${text//$'\r'/}"
+  text="${text//$'\t'/    }"
+  text="${text//[[:cntrl:]]/}"
+  while (( ${#text} > width )); do
+    seg="${text:0:width}"
+    if [[ "${text:width:1}" == " " ]]; then
+      cut=$width
+      WRAP_LINES+=("${text:0:cut}")
+      text="${text:cut}"
+      text="${text#"${text%%[! ]*}"}"
+      continue
+    fi
+    head="${seg% *}"
+    if [[ "$seg" == *" "* ]] && (( ${#head} >= width / 3 )); then
+      cut=${#head}
+      WRAP_LINES+=("${text:0:cut}")
+      text="${text:cut}"
+      text="${text#"${text%%[! ]*}"}"
+    else
+      WRAP_LINES+=("$seg")
+      text="${text:width}"
+    fi
+  done
+  WRAP_LINES+=("$text")
+}
+
+_box_row() {
+  local text="$1" plain="${2:-$1}" iw pad c="" r=""
+  iw=$(( BOX_W - 4 ))
+  if (( ${#plain} > iw )) && [[ "$text" == "$plain" ]]; then
+    text="${plain:0:iw}"
+    plain="$text"
+  fi
+  pad=$(( iw - ${#plain} ))
+  (( pad < 0 )) && pad=0
+  if [[ "$BOX_COLORS" -eq 1 ]]; then c="$C_MUTED"; r="$C_RESET"; fi
+  printf '%s│%s %s%*s %s│%s\n' "$c" "$r" "$text" "$pad" "" "$c" "$r"
+}
+
+box_head() {
+  local color="${1:-$C_ACCENT2}" title="$2" c="" r="" fill
+  box_measure
+  if [[ "$BOX_COLORS" -eq 1 ]]; then c="$color"; r="$C_RESET"; fi
+  if (( ${#title} > BOX_W - 6 )); then title="${title:0:$(( BOX_W - 6 ))}"; fi
+  fill=$(( BOX_W - ${#title} - 5 ))
+  printf '%s┌─ %s %s┐%s\n' "$c" "$title" "$(_rule "$fill")" "$r"
+}
+
+box_foot() {
+  local color="${1:-$C_ACCENT2}" c="" r=""
+  [[ -n "$BOX_W" ]] || box_measure
+  if [[ "$BOX_COLORS" -eq 1 ]]; then c="$color"; r="$C_RESET"; fi
+  printf '%s└%s┘%s\n' "$c" "$(_rule $(( BOX_W - 2 )))" "$r"
+}
+
+box_sep() {
+  local color="${1:-$C_MUTED}"
+  [[ -n "$BOX_W" ]] || box_measure
+  if [[ "$BOX_COLORS" -eq 1 ]]; then
+    printf '%s├%s┤%s\n' "$color" "$(_rule $(( BOX_W - 2 )))" "$C_RESET"
+  else
+    _box_row ""
+  fi
+}
+
 box_top() {
   local title="$1" icon="${2:-}" color="${3:-$C_ACCENT2}" label
   if [[ -n "$icon" ]]; then
@@ -739,19 +871,50 @@ box_top() {
   else
     label="${title}"
   fi
-  printf "\n%s┌─ %s %s%s\n" "$color" "$label" "$RULE_LINE" "$C_RESET"
+  printf '\n'
+  box_head "$color" "$label"
 }
 
-# box_line "text" — a body line inside a box, prefixed with a dim rail so it
-# visually nests under the header above it.
 box_line() {
-  printf "${C_MUTED}│${C_RESET} %s\n" "$*"
+  local text="$*" l
+  [[ -n "$BOX_W" ]] || box_measure
+  _plain "$text"
+  _wrap "$PLAIN" $(( BOX_W - 4 ))
+  for l in "${WRAP_LINES[@]}"; do
+    _box_row "$l"
+  done
 }
 
-# box_bottom "$COLOR" — closes a section opened with box_top.
 box_bottom() {
-  local color="${1:-$C_ACCENT2}"
-  printf "${color}└%s${C_RESET}\n" "$RULE_LINE"
+  box_foot "${1:-$C_ACCENT2}"
+}
+
+help_row() {
+  local cmd="$1" desc="$2" iw cw=28 dw l first=1 row
+  [[ -n "$BOX_W" ]] || box_measure
+  iw=$(( BOX_W - 4 ))
+  if (( iw < cw + 26 || ${#cmd} > cw )); then
+    _wrap "$cmd" "$iw"
+    for l in "${WRAP_LINES[@]}"; do
+      _box_row "$l"
+    done
+    _wrap "$desc" $(( iw - 2 ))
+    for l in "${WRAP_LINES[@]}"; do
+      _box_row "  $l"
+    done
+    return
+  fi
+  dw=$(( iw - cw - 1 ))
+  _wrap "$desc" "$dw"
+  for l in "${WRAP_LINES[@]}"; do
+    if (( first )); then
+      printf -v row '%-*s %s' "$cw" "$cmd" "$l"
+      first=0
+    else
+      printf -v row '%*s %s' "$cw" "" "$l"
+    fi
+    _box_row "$row"
+  done
 }
 
 # Renders the wordmark, picking a size that actually fits the current
@@ -762,61 +925,88 @@ box_bottom() {
 # still fits with room to spare.
 banner() {
   local cols
-  cols="$(tput cols 2>/dev/null)"
-  [[ "$cols" =~ ^[0-9]+$ ]] || cols="${COLUMNS:-80}"
-  [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+  box_measure
+  cols=$(( BOX_W + 1 ))
 
-  printf "${C_ACCENT}"
+  # Logo lines are printed with the printf builtin (no `cat` fork per
+  # banner draw), each in its own orange shade for a light-to-deep glow.
+  local -a glow=("$C_GLOW_1" "$C_GLOW_2" "$C_GLOW_3" "$C_GLOW_4" "$C_GLOW_5" "$C_GLOW_6")
+  local -a logo=() ln
+  local i=0
   if (( cols >= 64 )); then
     # Full block logo — needs 62 display columns.
-    cat <<'EOF'
- █████╗ ██╗   ██╗██╗  ████████╗██╗  ██╗██╗██╗   ██╗███╗   ███╗
-██╔══██╗██║   ██║██║  ╚══██╔══╝██║  ██║██║██║   ██║████╗ ████║
-███████║██║   ██║██║     ██║   ███████║██║██║   ██║██╔████╔██║
-██╔══██║██║   ██║██║     ██║   ██╔══██║██║██║   ██║██║╚██╔╝██║
-██║  ██║╚██████╔╝███████╗██║   ██║  ██║██║╚██████╔╝██║ ╚═╝ ██║
-╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝   ╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝     ╚═╝
-EOF
-    printf "${C_RESET}${C_DIM}                          A U L T H I U M${C_RESET}\n"
+    logo=(
+' █████╗ ██╗   ██╗██╗  ████████╗██╗  ██╗██╗██╗   ██╗███╗   ███╗'
+'██╔══██╗██║   ██║██║  ╚══██╔══╝██║  ██║██║██║   ██║████╗ ████║'
+'███████║██║   ██║██║     ██║   ███████║██║██║   ██║██╔████╔██║'
+'██╔══██║██║   ██║██║     ██║   ██╔══██║██║██║   ██║██║╚██╔╝██║'
+'██║  ██║╚██████╔╝███████╗██║   ██║  ██║██║╚██████╔╝██║ ╚═╝ ██║'
+'╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝   ╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝     ╚═╝'
+    )
+    for ln in "${logo[@]}"; do
+      printf '%s%s%s\n' "${glow[i]}" "$ln" "$C_RESET"
+      i=$((i + 1))
+    done
+    printf "${C_ACCENT2}                     A U L T H I U M   C L I${C_RESET}\n"
   elif (( cols >= 34 )); then
     # Compact two-line wordmark — needs 31 display columns. Fits typical
     # narrow phone terminals (Termux portrait, small SSH clients, etc).
-    cat <<'EOF'
-▄▀█ █░█ █░░ ▀█▀ █░█ █ █░█ █▀▄▀█
-█▀█ █▄█ █▄▄ ░█░ █▀█ █ █▄█ █░▀░█
-EOF
-    printf "${C_RESET}"
+    printf '%s%s%s\n' "$C_GLOW_2" '▄▀█ █░█ █░░ ▀█▀ █░█ █ █░█ █▀▄▀█' "$C_RESET"
+    printf '%s%s%s\n' "$C_GLOW_4" '█▀█ █▄█ █▄▄ ░█░ █▀█ █ █▄█ █░▀░█' "$C_RESET"
+    printf "${C_ACCENT2}            C L I${C_RESET}\n"
   else
     # Extremely narrow terminal — plain spaced-out text, always fits.
-    printf "${C_RESET}${C_ACCENT}AULTHIUM${C_RESET}\n"
+    printf "${C_RESET}${C_ACCENT}AULTHIUM CLI${C_RESET}\n"
   fi
 
   if (( cols >= 64 )); then
-    printf "${C_MUTED}               AI Terminal Assistant · %s${C_RESET}\n\n" "$APP_VERSION"
+    printf "${C_MUTED}               Aulthium CLI · AI Terminal Assistant · %s${C_RESET}\n\n" "$APP_VERSION"
   else
-    printf "${C_MUTED}AI Terminal Assistant · %s${C_RESET}\n\n" "$APP_VERSION"
+    printf "${C_MUTED}Aulthium CLI · %s${C_RESET}\n\n" "$APP_VERSION"
   fi
 }
 
-# Renders the "connected / model / sandbox" status panel shown at startup
-# and after 'a> clear'. Centralized so both call sites always match.
+session_row() {
+  local label="$1" value="$2" vcolor="${3:-}" vw l first=1 pad lab
+  [[ -n "$BOX_W" ]] || box_measure
+  vw=$(( BOX_W - 15 ))
+  (( vw < 8 )) && vw=8
+  _wrap "$value" "$vw"
+  for l in "${WRAP_LINES[@]}"; do
+    pad=$(( vw - ${#l} ))
+    (( pad < 0 )) && pad=0
+    lab=""
+    (( first )) && lab="$label"
+    printf '%s│%s %s%-10s%s %s%s%s%*s %s│%s\n' \
+      "$C_MUTED" "$C_RESET" "$C_ACCENT" "$lab" "$C_RESET" "$vcolor" "$l" "$C_RESET" "$pad" "" "$C_MUTED" "$C_RESET"
+    first=0
+  done
+}
+
 status_panel() {
-  printf "${C_ACCENT2}┌─ SESSION ─────────────────────────────────────${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} %-10s ${C_OK}%s${C_RESET}\n" "provider" "$(provider_label) — connected"
-  printf "${C_MUTED}│${C_RESET} %-10s %s\n" "model" "$CURRENT_MODEL"
-  printf "${C_MUTED}│${C_RESET} %-10s %s\n" "sandbox" "$WORKSPACE_DIR"
+  BOX_COLORS=1
+  box_head "${C_ACCENT2}" "SESSION"
+  session_row "provider" "$(provider_label) — connected" "$C_OK"
+  box_sep
+  session_row "model" "$CURRENT_MODEL" "$C_WARN"
+  box_sep
+  session_row "sandbox" "$WORKSPACE_DIR" "$C_ACCENT2"
   if [[ "${#MCP_NAMES[@]}" -gt 0 ]]; then
-    printf "${C_MUTED}│${C_RESET} %-10s %s\n" "mcp" "${#MCP_NAMES[@]} server(s) — a> mcp for details"
+    box_sep
+    session_row "mcp" "${#MCP_NAMES[@]} server(s) — a> mcp for details" "$C_OK"
   fi
   if [[ -n "$MEMORY_FILE" ]]; then
-    printf "${C_MUTED}│${C_RESET} %-10s %s\n" "memory" "connected — $MEMORY_FILE"
+    box_sep
+    session_row "memory" "connected — $MEMORY_FILE" "$C_OK"
   fi
   if [[ "$SKIP_CONFIRMATIONS" -eq 1 ]]; then
-    printf "${C_MUTED}│${C_RESET} %-10s ${C_WARN}%s${C_RESET}\n" "confirm" "OFF — actions auto-run, no y/N asked (a> confirm on to re-enable)"
+    box_sep
+    session_row "confirm" "OFF — actions auto-run, no y/N asked (a> confirm on to re-enable)" "$C_ERR"
   fi
-  printf "${C_ACCENT2}└─────────────────────────────────────────────${C_RESET}\n"
-  printf "${C_MUTED}Type ${C_RESET}a> help${C_MUTED} for commands · ${C_RESET}Ctrl+C${C_MUTED} to exit${C_RESET}\n"
-  printf "${C_MUTED}While waiting on a reply: ${C_RESET}Ctrl+T${C_MUTED} cancel thinking · ${C_RESET}Ctrl+S${C_MUTED} stop prompt${C_RESET}\n\n"
+  box_foot "${C_ACCENT2}"
+  BOX_COLORS=0
+  printf "${C_MUTED}Type ${C_ACCENT2}a>${C_RESET} ${C_ACCENT}help${C_MUTED} for commands · ${C_WARN}Ctrl+C${C_MUTED} to exit${C_RESET}\n"
+  printf "${C_MUTED}While waiting on a reply: ${C_WARN}Ctrl+T${C_MUTED} cancel thinking · ${C_WARN}Ctrl+S${C_MUTED} stop prompt${C_RESET}\n\n"
 }
 
 # Clears the terminal and reprints the banner + status panel. This is what
@@ -851,7 +1041,7 @@ cleanup_exit() {
   [[ -n "${UNDO_DIR:-}" ]] && rm -rf "$UNDO_DIR" 2>/dev/null
   [[ -n "${AUTOUPDATE_STATE_DIR:-}" ]] && rm -rf "$AUTOUPDATE_STATE_DIR" 2>/dev/null
   printf '\n'
-  printf "${C_OK}%s${C_RESET}\n" "Aulthium has been closed." >&2
+  printf "${C_OK}%s${C_RESET}\n" "Aulthium CLI has been closed." >&2
   exit 0
 }
 
@@ -1054,9 +1244,9 @@ autoupdate_worker() {
   # non-trivial size, looks like an Aulthium script, and valid bash syntax.
   if [[ ! -s "$tmp" ]] \
      || (( $(wc -c < "$tmp" 2>/dev/null || echo 0) < 2000 )) \
-     || ! grep -q '^APP_NAME="AULTHIUM"' "$tmp" \
+     || ! grep -qE '^APP_NAME="(AULTHIUM|Aulthium CLI)"' "$tmp" \
      || ! bash -n "$tmp" 2>/dev/null; then
-    printf '%s' "the download didn't look like a valid Aulthium script — skipped it" \
+    printf '%s' "the download didn't look like a valid Aulthium CLI script — skipped it" \
       > "$AUTOUPDATE_ERROR_FILE"
     rm -f "$tmp"
     return 0
@@ -1120,7 +1310,7 @@ autoupdate_poll() {
   AUTOUPDATE_NOTIFIED=1
   echo
   ok "Update v$v is downloaded and already in place — this session keeps running $APP_VERSION, untouched."
-  muted "Pick it up anytime: a> exit, then start Aulthium again."
+  muted "Pick it up anytime: a> exit, then start Aulthium CLI again."
 }
 
 # 'a> update' with no argument.
@@ -1131,7 +1321,7 @@ autoupdate_status_cmd() {
     return 0
   fi
   if [[ -z "$SELF_SCRIPT_PATH" || ! -f "$SELF_SCRIPT_PATH" ]]; then
-    warn "Auto-update is unavailable — Aulthium doesn't appear to be running from a saved"
+    warn "Auto-update is unavailable — Aulthium CLI doesn't appear to be running from a saved"
     warn "file on disk (e.g. it was piped straight into bash)."
     return 0
   fi
@@ -1141,8 +1331,10 @@ autoupdate_status_cmd() {
   fi
 
   ok "Auto-update is ON — checks quietly in the background every $(( AUTOUPDATE_INTERVAL_SECS / 3600 ))h, never interrupting chat."
-  printf "${C_MUTED}│${C_RESET} %-10s %s\n" "source" "$AUTOUPDATE_URL"
-  printf "${C_MUTED}│${C_RESET} %-10s %s\n" "running" "$APP_VERSION"
+  box_head "${C_ACCENT2}" "AUTO-UPDATE"
+  box_line "source:  $AUTOUPDATE_URL"
+  box_line "running: $APP_VERSION"
+  box_foot "${C_ACCENT2}"
 
   if [[ -s "$AUTOUPDATE_READY_FILE" ]]; then
     ok "v$(cat "$AUTOUPDATE_READY_FILE") is already downloaded and in place — restart to pick it up."
@@ -1461,7 +1653,7 @@ CHAT_HISTORY_CHAR_LIMIT=32000
 memory_write_snapshot() {
   local path="$1"
   {
-    printf '# Aulthium — saved chat history\n\n'
+    printf '# Aulthium CLI — saved chat history\n\n'
     printf '_saved %s · provider: %s · model: %s_\n\n' "$(date)" "$(provider_label)" "$CURRENT_MODEL"
     jq -r '.[1:][] | "### \(.role)\n\n\(.content)\n"' <<< "$messages_json"
   } > "$path" 2>/dev/null
@@ -1578,7 +1770,10 @@ trim_oldest_history() {
 check_chat_limit() {
   local size saved_path
 
-  size="$(printf '%s' "$messages_json" | wc -c | tr -d ' ')"
+  # Pure-bash length (characters, not bytes) — this runs before every chat
+  # message, and the limit is only a rough proxy anyway, so forking
+  # printf|wc|tr on the whole history each time was wasted work.
+  size=${#messages_json}
   [[ "$size" -lt "$CHAT_HISTORY_CHAR_LIMIT" ]] && return 0
 
   if [[ -n "$MEMORY_FILE" ]]; then
@@ -1588,10 +1783,9 @@ check_chat_limit() {
   fi
 
   echo
-  printf "${C_WARN}┌─ CHAT LIMIT REACHED ───────────────────────────${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} This conversation has grown large enough that it\n"
-  printf "${C_MUTED}│${C_RESET} risks hitting the model's real context limit.\n"
-  printf "${C_WARN}└─────────────────────────────────────────────${C_RESET}\n\n"
+  box_head "${C_WARN}" "CHAT LIMIT REACHED"
+  box_line "This conversation has grown large enough that it risks hitting the model's real context limit."
+  box_foot "${C_WARN}"; printf "\n"
 
   if confirm_yes_no "Save the full history to a file and connect to it, so this never asks again?"; then
     saved_path="$(archive_chat_history)"
@@ -1612,152 +1806,112 @@ check_chat_limit() {
 
 show_help() {
   echo
-  printf "${C_ACCENT2}┌─ COMMANDS ────────────────────────────────────${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> help" "show this menu"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> provider" "switch between OpenRouter, Google AI Studio, or Other"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> key" "change the API key for the current provider"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> model" "open the model picker (choose Free or Paid first)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> model <name>" "switch to a model by name (confirmation required)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> current" "show current provider and model"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> workdir" "show the current sandbox folder"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> workdir <path>" "change the sandbox folder"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp" "list connected MCP servers and their tools"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp add <n> <url>" "connect a remote MCP server (API key or none)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp oauth <n> <url>" "connect via OAuth 2.1 + PKCE (opens your browser)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp remove <name>" "disconnect an MCP server"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp refresh [name]" "re-discover tools (one server, or all)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp catalog" "list every quick-connect provider (Cloudflare, GitHub, ...)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp cloudflare" "quick-pick from Cloudflare's managed MCP servers"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp github" "quick-connect to GitHub's official remote MCP server"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp notion" "quick-connect to Notion's official remote MCP server"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp resend" "quick-connect to Resend's official remote MCP server"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp linear" "quick-connect to Linear's official remote MCP server"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp stripe" "quick-connect to Stripe's official remote MCP server"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> mcp cred ..." "encrypt on/off | clear — manage stored OAuth tokens"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> plugin" "list installed plugins"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> plugin run <name>" "launch a plugin (needs a y/N permissions grant)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> plugin run --stoprun <n>" "fully stop/de-register a running hook plugin"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> plugin toggle <n> <s>" "turn a running hook plugin on/off without stopping it"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> plugin info <name>" "show a plugin's manifest, effective config, and integrity"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> plugin config <name>" "view/set/unset a plugin's local config overrides"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> plugin verify <name>" "check installed files against the hash recorded at install"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> plugin install <p>" "install from a folder, github:owner/repo, or a zip URL"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> plugin update [name]" "check (and confirm) GitHub-sourced plugins for updates"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> plugin remove <name>" "delete an installed plugin (needs y/N confirmation)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> memory" "show whether a history file is connected"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> memory connect <p>" "connect/reconnect a history file (load or start it)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> memory disconnect" "stop appending turns to the connected file"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> confirm" "show whether the y/N action blocker is on or off"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> confirm on" "require y/N before every file/shell/MCP action (default)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> confirm off" "auto-approve every action instantly (no more asking)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> undo" "reverse the last file/folder/zip/network change"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> redo" "re-apply the last change you undid"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> clear" "clear the terminal"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> reset" "start a new conversation"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> history" "show chat history"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> update" "show auto-update status"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> update check" "check for an update now (runs in background, non-blocking)"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> update on|off" "toggle background auto-update checks for this session"
-  printf "${C_MUTED}│${C_RESET} %-22s %s\n" "a> exit" "exit Aulthium"
-  printf "${C_ACCENT2}└─────────────────────────────────────────────${C_RESET}\n"
+  box_head "${C_ACCENT2}" "COMMANDS"
+  help_row "a> help" "show this menu"
+  help_row "a> provider" "switch between OpenRouter, Google AI Studio, or Other"
+  help_row "a> key" "change the API key for the current provider"
+  help_row "a> model" "open the model picker (choose Free or Paid first)"
+  help_row "a> model <name>" "switch to a model by name (confirmation required)"
+  help_row "a> current" "show current provider and model"
+  box_sep
+  help_row "a> workdir" "show the current sandbox folder"
+  help_row "a> workdir <path>" "change the sandbox folder"
+  box_sep
+  help_row "a> mcp" "list connected MCP servers and their tools"
+  help_row "a> mcp add <n> <url>" "connect a remote MCP server (API key or none)"
+  help_row "a> mcp oauth <n> <url>" "connect via OAuth 2.1 + PKCE (opens your browser)"
+  help_row "a> mcp remove <name>" "disconnect an MCP server"
+  help_row "a> mcp refresh [name]" "re-discover tools (one server, or all)"
+  help_row "a> mcp catalog" "list every quick-connect provider (Cloudflare, GitHub, ...)"
+  help_row "a> mcp cloudflare" "quick-pick from Cloudflare's managed MCP servers"
+  help_row "a> mcp github" "quick-connect to GitHub's official remote MCP server"
+  help_row "a> mcp notion" "quick-connect to Notion's official remote MCP server"
+  help_row "a> mcp resend" "quick-connect to Resend's official remote MCP server"
+  help_row "a> mcp linear" "quick-connect to Linear's official remote MCP server"
+  help_row "a> mcp stripe" "quick-connect to Stripe's official remote MCP server"
+  help_row "a> mcp cred ..." "encrypt on/off | clear — manage stored OAuth tokens"
+  box_sep
+  help_row "a> plugin" "list installed plugins"
+  help_row "a> plugin run <name>" "launch a plugin (needs a y/N permissions grant)"
+  help_row "a> plugin run --stoprun <n>" "fully stop/de-register a running hook plugin"
+  help_row "a> plugin toggle <n> <s>" "turn a running hook plugin on/off without stopping it"
+  help_row "a> plugin info <name>" "show a plugin's manifest, effective config, and integrity"
+  help_row "a> plugin config <name>" "view/set/unset a plugin's local config overrides"
+  help_row "a> plugin verify <name>" "check installed files against the hash recorded at install"
+  help_row "a> plugin install <p>" "install from a folder, github:owner/repo, or a zip URL"
+  help_row "a> plugin update [name]" "check (and confirm) GitHub-sourced plugins for updates"
+  help_row "a> plugin remove <name>" "delete an installed plugin (needs y/N confirmation)"
+  box_sep
+  help_row "a> memory" "show whether a history file is connected"
+  help_row "a> memory connect <p>" "connect/reconnect a history file (load or start it)"
+  help_row "a> memory disconnect" "stop appending turns to the connected file"
+  box_sep
+  help_row "a> confirm" "show whether the y/N action blocker is on or off"
+  help_row "a> confirm on" "require y/N before every file/shell/MCP action (default)"
+  help_row "a> confirm off" "auto-approve every action instantly (no more asking)"
+  box_sep
+  help_row "a> undo" "reverse the last file/folder/zip/network change"
+  help_row "a> redo" "re-apply the last change you undid"
+  box_sep
+  help_row "a> clear" "clear the terminal"
+  help_row "a> reset" "start a new conversation"
+  help_row "a> history" "show chat history"
+  box_sep
+  help_row "a> update" "show auto-update status"
+  help_row "a> update check" "check for an update now (runs in background, non-blocking)"
+  help_row "a> update on|off" "toggle background auto-update checks for this session"
+  help_row "a> exit" "exit Aulthium CLI"
+  box_foot "${C_ACCENT2}"
 
-  printf "\n${C_MUTED}Chat: type any normal message at the ${C_RESET}User>${C_MUTED} prompt.${C_RESET}\n"
-  printf "${C_MUTED}If the conversation gets very long, you'll be asked once whether to save it to\n"
-  printf "a file and connect to it, or trim the oldest turns instead. Once connected, every\n"
-  printf "turn is appended there automatically and you won't be asked again — reload that\n"
-  printf "file anytime (this session or a future one) with ${C_RESET}a> memory connect <path>${C_MUTED}.${C_RESET}\n"
+  echo
+  box_head "${C_ACCENT2}" "CHAT"
+  box_line "Type any normal message at the You> prompt."
+  box_line ""
+  box_line "If the conversation gets very long, you'll be asked once whether to save it to a file and connect to it, or trim the oldest turns instead. Once connected, every turn is appended there automatically and you won't be asked again. Reload that file anytime (this session or a future one) with: a> memory connect <path>"
+  box_foot "${C_ACCENT2}"
 
-  printf "\n${C_MUTED}While a reply is in progress:${C_RESET}\n"
-  printf "${C_MUTED}  ${C_RESET}Ctrl+T${C_MUTED}  cancel thinking — abort just the current network call.${C_RESET}\n"
-  printf "${C_MUTED}  ${C_RESET}Ctrl+S${C_MUTED}  stop prompt — abort the call and the rest of this turn\n"
-  printf "${C_MUTED}          (including any further tool-call rounds).${C_RESET}\n"
+  echo
+  box_head "${C_ACCENT2}" "WHILE A REPLY RUNS"
+  box_line "Ctrl+T  cancel thinking: abort just the current network call."
+  box_line "Ctrl+S  stop prompt: abort the call and the rest of this turn, including any further tool-call rounds."
+  box_foot "${C_ACCENT2}"
 
-  printf "\n${C_ACCENT2}┌─ FILE AGENT ──────────────────────────────────${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} ${C_OK}${ICON_READ} ${ICON_DIR} ${ICON_ZIP}${C_RESET}  read files, list folders, inspect zips —\n"
-  printf "${C_MUTED}│${C_RESET}       runs automatically, no confirmation (read-only),\n"
-  printf "${C_MUTED}│${C_RESET}       results are fed back to the agent for its next turn.\n"
-  printf "${C_MUTED}│${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} ${C_OK}${ICON_SEARCH}${C_RESET}      the agent can also search the live web (free, no\n"
-  printf "${C_MUTED}│${C_RESET}       API key) for current info it doesn't already know —\n"
-  printf "${C_MUTED}│${C_RESET}       tries 3 SearXNG instances, then DuckDuckGo Lite if all\n"
-  printf "${C_MUTED}│${C_RESET}       are blocked or unreachable; also automatic, read-only, no\n"
-  printf "${C_MUTED}│${C_RESET}       confirmation needed.\n"
-  printf "${C_MUTED}│${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} ${C_WARN}${ICON_WRITE} ${ICON_DELETE} ${ICON_FOLDER} ${ICON_MOVE} ${ICON_ZIP} ${ICON_NET}${C_RESET}  write/overwrite a file, delete a\n"
-  printf "${C_MUTED}│${C_RESET}       single file, delete a folder (and everything inside it),\n"
-  printf "${C_MUTED}│${C_RESET}       create an empty folder, move/rename a file or folder,\n"
-  printf "${C_MUTED}│${C_RESET}       zip/unzip an archive, or make a network request/download —\n"
-  printf "${C_MUTED}│${C_RESET}       every one of these is shown to you and needs a yes/no\n"
-  printf "${C_MUTED}│${C_RESET}       confirmation first. File/folder/zip/network-download\n"
-  printf "${C_MUTED}│${C_RESET}       changes can be undone with 'a> undo' (redo with 'a> redo').\n"
-  printf "${C_MUTED}│${C_RESET}       Network requests reach the real internet; everything else\n"
-  printf "${C_MUTED}│${C_RESET}       never touches anything outside the sandbox folder.\n"
-  printf "${C_ACCENT2}└─────────────────────────────────────────────${C_RESET}\n"
+  echo
+  box_head "${C_ACCENT2}" "FILE AGENT"
+  box_line "${ICON_READ} ${ICON_DIR} ${ICON_ZIP}  Read files, list folders, inspect zips. Runs automatically with no confirmation (read-only); results are fed back to the agent for its next turn."
+  box_line ""
+  box_line "${ICON_SEARCH}  The agent can also search the live web (free, no API key) for current info it doesn't already know. Tries 3 SearXNG instances, then DuckDuckGo Lite if all are blocked or unreachable. Also automatic, read-only, no confirmation needed."
+  box_line ""
+  box_line "${ICON_WRITE} ${ICON_DELETE} ${ICON_FOLDER} ${ICON_MOVE} ${ICON_ZIP} ${ICON_NET}  Write/overwrite a file, delete a single file, delete a folder (and everything inside it), create an empty folder, move/rename a file or folder, zip/unzip an archive, or make a network request/download. Every one of these is shown to you and needs a yes/no confirmation first. File, folder, zip and network-download changes can be undone with 'a> undo' (redo with 'a> redo'). Network requests reach the real internet; everything else never touches anything outside the sandbox folder."
+  box_foot "${C_ACCENT2}"
 
-  printf "\n${C_ACCENT2}┌─ SHELL AGENT ─────────────────────────────────${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} ${C_ERR}${ICON_SHELL}${C_RESET}      the agent can propose shell command(s), shown\n"
-  printf "${C_MUTED}│${C_RESET}       to you in full before you approve or decline.\n"
-  printf "${C_MUTED}│${C_RESET}       Unlike file actions, shell commands are ${C_BOLD}NOT${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET}       confined to the sandbox — they run with your real\n"
-  printf "${C_MUTED}│${C_RESET}       shell privileges, so only approve what you trust.\n"
-  printf "${C_ACCENT2}└─────────────────────────────────────────────${C_RESET}\n"
+  echo
+  box_head "${C_ACCENT2}" "SHELL AGENT"
+  box_line "${ICON_SHELL}  The agent can propose shell command(s), shown to you in full before you approve or decline. Unlike file actions, shell commands are NOT confined to the sandbox. They run with your real shell privileges, so only approve what you trust."
+  box_foot "${C_ACCENT2}"
 
-  printf "\n${C_ACCENT2}┌─ MCP TOOLS ───────────────────────────────────${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} ${C_OK}${ICON_MCP}${C_RESET}      connect a remote MCP server with ${C_RESET}a> mcp add\n"
-  printf "${C_MUTED}│${C_RESET}       <name> <url>${C_MUTED} — its tools are discovered immediately\n"
-  printf "${C_MUTED}│${C_RESET}       and folded into what the agent can call. Unlike the\n"
-  printf "${C_MUTED}│${C_RESET}       read-only file/search tools, calling one needs a\n"
-  printf "${C_MUTED}│${C_RESET}       yes/no confirmation first, same as shell commands —\n"
-  printf "${C_MUTED}│${C_RESET}       this app can't know what a given tool actually does.\n"
-  printf "${C_MUTED}│${C_RESET}       Only HTTP(S) MCP servers are supported (no local/stdio\n"
-  printf "${C_MUTED}│${C_RESET}       servers). Pre-configure several at launch via the\n"
-  printf "${C_MUTED}│${C_RESET}       MCP_SERVERS env var: name1=url1,name2=url2 — with an\n"
-  printf "${C_MUTED}│${C_RESET}       optional key for each in MCP_<NAME>_KEY.\n"
-  printf "${C_MUTED}│${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET}       ${C_RESET}a> mcp cloudflare${C_MUTED} quick-picks from Cloudflare's own\n"
-  printf "${C_MUTED}│${C_RESET}       managed MCP servers (docs, Workers bindings, Radar, AI\n"
-  printf "${C_MUTED}│${C_RESET}       Gateway, ...) by name instead of typing out a URL — once\n"
-  printf "${C_MUTED}│${C_RESET}       added they're ordinary MCP servers like any other.\n"
-  printf "${C_MUTED}│${C_RESET}       ${C_RESET}a> mcp github${C_MUTED} quick-connects to GitHub's official\n"
-  printf "${C_MUTED}│${C_RESET}       remote MCP server (repos, issues, PRs, Actions, ...) via\n"
-  printf "${C_MUTED}│${C_RESET}       a personal access token or browser OAuth. ${C_RESET}a> mcp notion${C_MUTED},\n"
-  printf "${C_MUTED}│${C_RESET}       ${C_RESET}a> mcp resend${C_MUTED}, ${C_RESET}a> mcp linear${C_MUTED}, and ${C_RESET}a> mcp stripe${C_MUTED} work the\n"
-  printf "${C_MUTED}│${C_RESET}       same way for their own official remote servers — run\n"
-  printf "${C_MUTED}│${C_RESET}       ${C_RESET}a> mcp catalog${C_MUTED} to see every quick-connect shortcut at once.\n"
-  printf "${C_ACCENT2}└─────────────────────────────────────────────${C_RESET}\n"
+  echo
+  box_head "${C_ACCENT2}" "MCP TOOLS"
+  box_line "${ICON_MCP}  Connect a remote MCP server with: a> mcp add <name> <url>. Its tools are discovered immediately and folded into what the agent can call. Unlike the read-only file/search tools, calling one needs a yes/no confirmation first, same as shell commands, since this app can't know what a given tool actually does. Only HTTP(S) MCP servers are supported (no local/stdio servers). Pre-configure several at launch via the MCP_SERVERS env var: name1=url1,name2=url2, with an optional key for each in MCP_<NAME>_KEY."
+  box_line ""
+  box_line "a> mcp cloudflare quick-picks from Cloudflare's own managed MCP servers (docs, Workers bindings, Radar, AI Gateway, ...) by name instead of typing out a URL. Once added they're ordinary MCP servers like any other."
+  box_line ""
+  box_line "a> mcp github quick-connects to GitHub's official remote MCP server (repos, issues, PRs, Actions, ...) via a personal access token or browser OAuth. a> mcp notion, a> mcp resend, a> mcp linear and a> mcp stripe work the same way for their own official remote servers. Run a> mcp catalog to see every quick-connect shortcut at once."
+  box_foot "${C_ACCENT2}"
 
-  printf "\n${C_ACCENT2}┌─ PLUGINS ─────────────────────────────────────${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} ${C_OK}${ICON_PLUGIN}${C_RESET}      plugins are separate external programs, one\n"
-  printf "${C_MUTED}│${C_RESET}       per folder under %s, each\n" "$PLUGINS_DIR"
-  printf "${C_MUTED}│${C_RESET}       with a plugin.json manifest. Unlike the file/search\n"
-  printf "${C_MUTED}│${C_RESET}       agent, they are NOT sandboxed — launching one is a\n"
-  printf "${C_MUTED}│${C_RESET}       trust decision, same tier as a shell command, and\n"
-  printf "${C_MUTED}│${C_RESET}       needs a y/N confirmation.\n"
-  printf "${C_MUTED}│${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET}       Built-in plugins aren't bundled in this script — they're\n"
-  printf "${C_MUTED}│${C_RESET}       discovered live from github.com/%s\n" "$BUILTIN_PLUGINS_REPO"
-  printf "${C_MUTED}│${C_RESET}       (path: %s), so what's available can\n" "$BUILTIN_PLUGINS_PATH"
-  printf "${C_MUTED}│${C_RESET}       change without a script update. See ${C_RESET}a> plugin list${C_MUTED}\n"
-  printf "${C_MUTED}│${C_RESET}       for the current set — ${C_RESET}a> plugin run <name>${C_MUTED} fetches\n"
-  printf "${C_MUTED}│${C_RESET}       one from GitHub the first time, and\n"
-  printf "${C_MUTED}│${C_RESET}       ${C_RESET}a> plugin update <name>${C_MUTED} checks for a newer release.\n"
-  printf "${C_MUTED}│${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET}       Write your own by reading BUILD_PLUGIN.md, then\n"
-  printf "${C_MUTED}│${C_RESET}       ${C_RESET}a> plugin install <folder|github:owner/repo|url>${C_MUTED}.\n"
-  printf "${C_MUTED}│${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET}       A \"hook\" plugin (${C_RESET}\"mode\": \"hook\"${C_MUTED} in its manifest)\n"
-  printf "${C_MUTED}│${C_RESET}       registers for one hook point and is invoked on-demand\n"
-  printf "${C_MUTED}│${C_RESET}       instead of taking over the terminal. Known hook points:\n"
-  printf "${C_MUTED}│${C_RESET}       %s\n" "$KNOWN_HOOK_POINTS"
-  printf "${C_MUTED}│${C_RESET}       Multiple plugins can run on the same hook point at once —\n"
-  printf "${C_MUTED}│${C_RESET}       an optional integer ${C_RESET}\"priority\"${C_MUTED} in plugin.json (default 0)\n"
-  printf "${C_MUTED}│${C_RESET}       decides where each one sits in the chain (higher runs\n"
-  printf "${C_MUTED}│${C_RESET}       first, ties keep registration order). What \"multiple\"\n"
-  printf "${C_MUTED}│${C_RESET}       means depends on the hook: web_search tries each until\n"
-  printf "${C_MUTED}│${C_RESET}       one succeeds; shell_exec/file_action/mcp_call let any one\n"
-  printf "${C_MUTED}│${C_RESET}       of them veto; chat_pre threads the message through all of\n"
-  printf "${C_MUTED}│${C_RESET}       them in turn. ${C_RESET}a> plugin${C_MUTED} shows each plugin's chain position.\n"
-  printf "${C_ACCENT2}└─────────────────────────────────────────────${C_RESET}\n\n"
+  echo
+  box_head "${C_ACCENT2}" "PLUGINS"
+  box_line "${ICON_PLUGIN}  Plugins are separate external programs, one per folder under ${PLUGINS_DIR}, each with a plugin.json manifest. Unlike the file/search agent, they are NOT sandboxed: launching one is a trust decision, same tier as a shell command, and needs a y/N confirmation."
+  box_line ""
+  box_line "Built-in plugins aren't bundled in this script. They're discovered live from github.com/${BUILTIN_PLUGINS_REPO} (path: ${BUILTIN_PLUGINS_PATH}), so what's available can change without a script update. See a> plugin list for the current set. a> plugin run <name> fetches one from GitHub the first time, and a> plugin update <name> checks for a newer release."
+  box_line ""
+  box_line "Write your own by reading BUILD_PLUGIN.md, then: a> plugin install <folder|github:owner/repo|url>."
+  box_line ""
+  box_line "A \"hook\" plugin (\"mode\": \"hook\" in its manifest) registers for one hook point and is invoked on-demand instead of taking over the terminal. Known hook points: ${KNOWN_HOOK_POINTS}"
+  box_line ""
+  box_line "Multiple plugins can run on the same hook point at once. An optional integer \"priority\" in plugin.json (default 0) decides where each one sits in the chain (higher runs first, ties keep registration order). What \"multiple\" means depends on the hook: web_search tries each until one succeeds; shell_exec, file_action and mcp_call let any one of them veto; chat_pre threads the message through all of them in turn. a> plugin shows each plugin's chain position."
+  box_foot "${C_ACCENT2}"
+  printf "\n"
 }
 
 show_history() {
@@ -1774,9 +1928,9 @@ show_history() {
     "\(.role)\u0001\(.content)"
   ' <<< "$messages_json" | while IFS=$'\001' read -r role content; do
     case "$role" in
-      user) printf "${C_ACCENT2}%-10s${C_RESET}%s\n\n" "you" "$content" ;;
-      assistant) printf "${C_ACCENT}%-10s${C_RESET}%s\n\n" "aulthium" "$content" ;;
-      *) printf "${C_MUTED}%-10s${C_RESET}%s\n\n" "$role" "$content" ;;
+      user) printf "${C_ACCENT2}%-12s${C_RESET}%s\n\n" "you" "$content" ;;
+      assistant) printf "${C_ACCENT}%-12s${C_RESET}%s\n\n" "aulthium cli" "$content" ;;
+      *) printf "${C_MUTED}%-12s${C_RESET}%s\n\n" "$role" "$content" ;;
     esac
   done
 }
@@ -1873,9 +2027,9 @@ prompt_model_tier() {
   local ans
   while true; do
     echo >&2
-    printf "${C_ACCENT2}┌─ MODEL PICKER ────────────────────────────────${C_RESET}\n" >&2
-    printf "${C_MUTED}│${C_RESET} current: ${C_OK}%s${C_RESET}\n" "$CURRENT_MODEL" >&2
-    printf "${C_ACCENT2}└─────────────────────────────────────────────${C_RESET}\n\n" >&2
+    box_head "${C_ACCENT2}" "MODEL PICKER" >&2
+    box_line "current: $CURRENT_MODEL" >&2
+    box_foot "${C_ACCENT2}" >&2; printf "\n" >&2
     printf "${C_MUTED}[1]${C_RESET} Free models ${C_DIM}(no cost, OpenRouter free tier)${C_RESET}\n" >&2
     printf "${C_MUTED}[2]${C_RESET} Paid models ${C_DIM}(billed to your OpenRouter balance)${C_RESET}\n" >&2
     echo >&2
@@ -1926,12 +2080,9 @@ configure_custom_provider() {
   local url model
 
   echo
-  printf "${C_ACCENT2}┌─ OTHER PROVIDER ───────────────────────────────${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} Any OpenAI-compatible ${C_DIM}/chat/completions${C_RESET} endpoint works\n"
-  printf "${C_MUTED}│${C_RESET} here — self-hosted (Ollama, LM Studio, llama.cpp,\n"
-  printf "${C_MUTED}│${C_RESET} vLLM, text-generation-webui) or any hosted API\n"
-  printf "${C_MUTED}│${C_RESET} using the same request/response shape.\n"
-  printf "${C_ACCENT2}└─────────────────────────────────────────────${C_RESET}\n\n"
+  box_head "${C_ACCENT2}" "OTHER PROVIDER"
+  box_line "Any OpenAI-compatible /chat/completions endpoint works here — self-hosted (Ollama, LM Studio, llama.cpp, vLLM, text-generation-webui) or any hosted API using the same request/response shape."
+  box_foot "${C_ACCENT2}"; printf "\n"
 
   if ! read -r -p "$(printf "${C_ACCENT2}?${C_RESET} API base URL ${C_MUTED}(full endpoint, q to cancel)${C_RESET}: ")" url; then
     muted "Cancelled."
@@ -1974,9 +2125,9 @@ pick_provider_startup() {
   local choice
 
   echo
-  printf "${C_ACCENT2}┌─ CHOOSE PROVIDER ──────────────────────────────${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} Pick which backend %s should use.\n" "$APP_NAME"
-  printf "${C_ACCENT2}└─────────────────────────────────────────────${C_RESET}\n\n"
+  box_head "${C_ACCENT2}" "CHOOSE PROVIDER"
+  box_line "Pick which backend $APP_NAME should use."
+  box_foot "${C_ACCENT2}"; printf "\n"
   printf "${C_MUTED}[1]${C_RESET} OpenRouter ${C_DIM}(many models, free + paid)${C_RESET}\n"
   printf "${C_MUTED}[2]${C_RESET} Google AI Studio ${C_DIM}(Gemini models)${C_RESET}\n"
   printf "${C_MUTED}[3]${C_RESET} Mistral ${C_DIM}(api.mistral.ai)${C_RESET}\n"
@@ -2040,9 +2191,9 @@ pick_provider_ui() {
   local choice new_provider new_label
 
   echo
-  printf "${C_ACCENT2}┌─ PROVIDER ─────────────────────────────────────${C_RESET}\n"
-  printf "${C_MUTED}│${C_RESET} current: ${C_OK}%s${C_RESET}\n" "$(provider_label)"
-  printf "${C_ACCENT2}└─────────────────────────────────────────────${C_RESET}\n\n"
+  box_head "${C_ACCENT2}" "PROVIDER"
+  box_line "current: $(provider_label)"
+  box_foot "${C_ACCENT2}"; printf "\n"
   printf "${C_MUTED}[1]${C_RESET} OpenRouter ${C_DIM}(many models, free + paid)${C_RESET}\n"
   printf "${C_MUTED}[2]${C_RESET} Google AI Studio ${C_DIM}(Gemini models)${C_RESET}\n"
   printf "${C_MUTED}[3]${C_RESET} Mistral ${C_DIM}(api.mistral.ai)${C_RESET}\n"
@@ -2198,9 +2349,9 @@ pick_model_from_tier() {
 
   clear
   banner
-  printf "${C_ACCENT2}┌─ MODEL PICKER — %s ────────────────────────────${C_RESET}\n" "${tier^^}"
-  printf "${C_MUTED}│${C_RESET} current: ${C_OK}%s${C_RESET}\n" "$CURRENT_MODEL"
-  printf "${C_ACCENT2}└─────────────────────────────────────────────${C_RESET}\n\n"
+  box_head "${C_ACCENT2}" "MODEL PICKER — ${tier^^}"
+  box_line "current: $CURRENT_MODEL"
+  box_foot "${C_ACCENT2}"; printf "\n"
   if [[ "$tier" == "free" ]]; then
     printf "${C_MUTED}[0]${C_RESET} openrouter/free ${C_DIM}(auto-router)${C_RESET}\n"
   fi
@@ -5449,7 +5600,7 @@ OAUTH_CLIENT_SECRET=""
 oauth_dynamic_register() {
   local registration_endpoint="$1" redirect_uri="$2" req
   [[ -z "$registration_endpoint" ]] && return 1
-  req="$(jq -nc --arg name "Aulthium" --arg uri "$redirect_uri" \
+  req="$(jq -nc --arg name "Aulthium CLI" --arg uri "$redirect_uri" \
     '{client_name:$name, redirect_uris:[$uri], grant_types:["authorization_code","refresh_token"], response_types:["code"], token_endpoint_auth_method:"none"}')"
   if oauth_http_post_json "$registration_endpoint" "$req" && jq -e . >/dev/null 2>&1 <<< "$OAUTH_HTTP_BODY"; then
     OAUTH_CLIENT_ID="$(jq -r '.client_id // empty' <<< "$OAUTH_HTTP_BODY")"
@@ -5626,8 +5777,8 @@ oauth_run_callback_listener() {
   local port="$1" timeout="${2:-180}" req request_line query
   OAUTH_CALLBACK_CODE=""; OAUTH_CALLBACK_STATE=""; OAUTH_CALLBACK_ERROR=""
 
-  local resp_ok='HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body><h2>Aulthium: authorization received.</h2><p>You can close this tab and return to the terminal.</p></body></html>'
-  local resp_err='HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body><h2>Aulthium: authorization was not completed.</h2><p>You can close this tab and return to the terminal.</p></body></html>'
+  local resp_ok='HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body><h2>Aulthium CLI: authorization received.</h2><p>You can close this tab and return to the terminal.</p></body></html>'
+  local resp_err='HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body><h2>Aulthium CLI: authorization was not completed.</h2><p>You can close this tab and return to the terminal.</p></body></html>'
 
   request_line="$( { printf '%b' "$resp_ok" | timeout "${timeout}"s nc -l -q1 127.0.0.1 "$port" 2>/dev/null || true; } | head -n1 | tr -d '\r' )"
   [[ -z "$request_line" ]] && { OAUTH_CALLBACK_ERROR="Timed out waiting for the browser redirect."; return 1; }
@@ -5703,10 +5854,10 @@ port = int(sys.argv[1])
 timeout = float(sys.argv[2])
 
 RESP_OK = ("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n"
-           "<html><body><h2>Aulthium: authorization received.</h2>"
+           "<html><body><h2>Aulthium CLI: authorization received.</h2>"
            "<p>You can close this tab and return to the terminal.</p></body></html>")
 RESP_ERR = ("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n"
-            "<html><body><h2>Aulthium: authorization was not completed.</h2>"
+            "<html><body><h2>Aulthium CLI: authorization was not completed.</h2>"
             "<p>You can close this tab and return to the terminal.</p></body></html>")
 
 captured = {"query": ""}
@@ -5857,7 +6008,7 @@ oauth_get_manual_client() {
 
   box_top "MANUAL OAUTH CLIENT NEEDED" "$ICON_MCP" "$C_WARN"
   box_line "$label's authorization server doesn't support automatic client"
-  box_line "registration — register Aulthium as an OAuth App yourself and"
+  box_line "registration — register Aulthium CLI as an OAuth App yourself and"
   box_line "paste in its credentials (only needed once per provider)."
   if [[ "$OAUTH_AUTHZ_ENDPOINT" == *"github.com"* ]]; then
     box_line ""
@@ -5866,7 +6017,7 @@ oauth_get_manual_client() {
     box_line "the Authorization callback URL to: http://127.0.0.1/callback"
     box_line "(GitHub doesn't require the port in the callback to match"
     box_line "the one actually used at login time, so this works no"
-    box_line "matter which local port Aulthium happens to pick). Then"
+    box_line "matter which local port Aulthium CLI happens to pick). Then"
     box_line "generate a client secret — GitHub requires one at the token"
     box_line "endpoint even though this flow already uses PKCE."
   fi
@@ -5920,7 +6071,7 @@ oauth_run_flow() {
   client_secret="${OAUTH_PRESET_CLIENT_SECRET:-}"
   if [[ -z "$client_id" ]]; then
     if [[ -n "$OAUTH_REGISTRATION_ENDPOINT" ]]; then
-      say "Registering Aulthium as a client with this server (RFC 7591)..."
+      say "Registering Aulthium CLI as a client with this server (RFC 7591)..."
       if ! oauth_dynamic_register "$OAUTH_REGISTRATION_ENDPOINT" "$redirect_uri"; then
         OAUTH_FLOW_ERROR="Dynamic client registration failed and no client_id was pre-configured for this server."
         return 1
@@ -7371,7 +7522,7 @@ process_agent_reply() {
     esac
   fi
 
-  printf "\n${C_ACCENT}${C_BOLD}Aulthium>${C_RESET} %s\n" "$cleaned"
+  printf "\n${C_ACCENT}${C_BOLD}Aulthium CLI>${C_RESET} %s\n" "$cleaned"
 
   local i
   # File-changing actions: always confirmation-gated, applied immediately.
@@ -7650,22 +7801,23 @@ plugins_autostart() {
   for dir in "$PLUGINS_DIR"/*/; do
     manifest="${dir}plugin.json"
     [[ -f "$manifest" ]] || continue
-    name="$(basename "$dir")"
+    name="${dir%/}"; name="${name##*/}"
 
-    mode="$(jq -r '.mode // "foreground"' "$manifest" 2>/dev/null)"
+    # One jq process per manifest instead of seven. Fields are joined with
+    # the ASCII unit separator (not whitespace), so empty fields survive
+    # `read` instead of collapsing together.
+    IFS=$'\x1f' read -r mode autostart hook entry runtime toggle_prefix priority < <(
+      jq -r '[(.mode // "foreground"), ((.autostart // false)|tostring), (.hook // ""),
+              (.entry // ""), (.runtime // ""), (.toggle_prefix // ""), ((.priority // 0)|tostring)]
+             | join("\u001f")' "$manifest" 2>/dev/null
+    )
     [[ "$mode" == "hook" ]] || continue
-    autostart="$(jq -r '.autostart // false' "$manifest" 2>/dev/null)"
     [[ "$autostart" == "true" ]] || continue
 
     state="$(plugin_hook_state_load "$name")"
     [[ "$state" == "stopped" ]] && continue
     [[ -z "$state" ]] && state="on"
 
-    hook="$(jq -r '.hook // empty' "$manifest" 2>/dev/null)"
-    entry="$(jq -r '.entry // empty' "$manifest" 2>/dev/null)"
-    runtime="$(jq -r '.runtime // empty' "$manifest" 2>/dev/null)"
-    toggle_prefix="$(jq -r '.toggle_prefix // empty' "$manifest" 2>/dev/null)"
-    priority="$(jq -r '.priority // 0' "$manifest" 2>/dev/null)"
     [[ "$priority" =~ ^-?[0-9]+$ ]] || priority=0
 
     if [[ -z "$hook" || -z "$entry" ]]; then
@@ -7790,7 +7942,7 @@ plugin_permission_label() {
     shell)      printf 'Shell access — can run arbitrary commands on this machine.' ;;
     mcp)        printf 'MCP access — can call your connected MCP servers/tools.' ;;
     secrets)    printf 'Secrets access — receives your live API key for the active provider.' ;;
-    *)          printf 'Unrecognized permission scope (not known to this version of Aulthium).' ;;
+    *)          printf 'Unrecognized permission scope (not known to this version of Aulthium CLI).' ;;
   esac
 }
 
@@ -7836,7 +7988,7 @@ plugin_manifest_validate() {
       return 1
     fi
     if ! hook_point_is_known "$hook"; then
-      warn "plugin.json declares hook point '$hook', which this version of Aulthium doesn't know (known: $KNOWN_HOOK_POINTS) — it'll fail to register until that's fixed or a future version adds it."
+      warn "plugin.json declares hook point '$hook', which this version of Aulthium CLI doesn't know (known: $KNOWN_HOOK_POINTS) — it'll fail to register until that's fixed or a future version adds it."
     fi
   fi
   perms="$(jq -r '.permissions[]? // empty' "$manifest" 2>/dev/null)"
@@ -7846,7 +7998,7 @@ plugin_manifest_validate() {
       [[ " $KNOWN_PLUGIN_PERMISSIONS " == *" $p "* ]] || unknown="$unknown $p"
     done <<< "$perms"
     if [[ -n "$unknown" ]]; then
-      warn "plugin.json declares unrecognized permission(s):$unknown — shown to the user as-is, but this version of Aulthium has no built-in description for them."
+      warn "plugin.json declares unrecognized permission(s):$unknown — shown to the user as-is, but this version of Aulthium CLI has no built-in description for them."
     fi
   fi
   return 0
@@ -7915,7 +8067,7 @@ plugin_confirm_permissions() {
   box_top "PLUGIN PERMISSIONS: $name" "$ICON_WARN" "$C_WARN"
   if [[ -z "$perms" ]]; then
     box_line "${C_MUTED}This plugin declares no permissions in its plugin.json.${C_RESET}"
-    box_line "${C_MUTED}It is still an ordinary external program — Aulthium does not sandbox it.${C_RESET}"
+    box_line "${C_MUTED}It is still an ordinary external program — Aulthium CLI does not sandbox it.${C_RESET}"
   else
     while IFS= read -r p; do
       [[ -z "$p" ]] && continue
@@ -8796,7 +8948,7 @@ plugin_run() {
     fi
   fi
 
-  warn "Plugins are ordinary external programs — Aulthium does not sandbox them like the file agent."
+  warn "Plugins are ordinary external programs — Aulthium CLI does not sandbox them like the file agent."
   if ! plugin_confirm_permissions "$name" "$manifest"; then
     warn "Cancelled."
     return 1
@@ -8812,7 +8964,7 @@ plugin_run() {
   # Hook plugins (mode:"hook" in their manifest, e.g. better-websearch)
   # don't take over the terminal — they just register here and get
   # invoked on-demand at whatever hook point they declared. Chat keeps
-  # going at "User>" immediately; no Ctrl+C dance, no foreground eval.
+  # going at "You>" immediately; no Ctrl+C dance, no foreground eval.
   if [[ "$mode" == "hook" ]]; then
     if [[ -z "$hook" ]]; then
       err "Plugin '$name' has \"mode\": \"hook\" but no \"hook\" field naming what it hooks — can't register it."
@@ -8820,7 +8972,7 @@ plugin_run() {
     fi
 
     if ! hook_point_is_known "$hook"; then
-      err "Plugin '$name' declares an unknown hook point '$hook' — this version of Aulthium only knows: $KNOWN_HOOK_POINTS."
+      err "Plugin '$name' declares an unknown hook point '$hook' — this version of Aulthium CLI only knows: $KNOWN_HOOK_POINTS."
       return 1
     fi
     RUNNING_PLUGIN_PRIORITY[$name]="$priority"
@@ -8842,7 +8994,7 @@ plugin_run() {
     RUNNING_PLUGIN_TOGGLE_PREFIX[$name]="$toggle_prefix"
     plugin_hook_state_save "$name" "on"
 
-    ok "'$name' is active — it'll now handle $hook automatically. Keep chatting at User>."
+    ok "'$name' is active — it'll now handle $hook automatically. Keep chatting at You>."
     if [[ -n "$toggle_prefix" ]]; then
       muted "Toggle it with: ${toggle_prefix}> on|off   —   or: a> plugin toggle $name on|off   —   stop it fully with: a> plugin run --stoprun $name"
     else
@@ -9024,7 +9176,7 @@ call_openrouter() {
       -H "Authorization: Bearer $OPENROUTER_KEY" \
       -H "Content-Type: application/json" \
       -H "HTTP-Referer: http://localhost" \
-      -H "X-Title: Aulthium" \
+      -H "X-Title: Aulthium CLI" \
       --data "$payload"
   then
     rm -f "$tmp_body" "$tmp_headers" "$tmp_code"
@@ -9440,7 +9592,7 @@ get_completion() {
   if [[ -n "$reasoning" ]]; then
     warn "This model didn't return a final answer, only its internal reasoning."
     echo "Showing that instead — treat it as a rough idea, not a finished answer:"
-    printf "\n${C_DIM}${C_ACCENT}Aulthium (reasoning trace)>${C_RESET} %s\n\n" "$reasoning"
+    printf "\n${C_DIM}${C_ACCENT}Aulthium CLI (reasoning trace)>${C_RESET} %s\n\n" "$reasoning"
     warn "Consider switching models with 'a> model' — this one struggled with this request."
     printf '%s' "$reasoning"
     return 0
@@ -9865,7 +10017,7 @@ plugin_toggle_prefix_forward() {
 # (e.g. better-websearch's "bws") gets first look — typing "bws> on" or
 # "bws> off" at the normal chat prompt is recognized as that plugin's
 # shorthand toggle instead of being sent to the AI as a message, so
-# switching it on/off never requires leaving the chat flow at User> at
+# switching it on/off never requires leaving the chat flow at You> at
 # all. Anything else after the prefix (e.g. "skills> use my-skill") is
 # forwarded verbatim to the plugin itself via plugin_toggle_prefix_forward
 # rather than rejected — see that function for the call convention. Only
@@ -9934,7 +10086,7 @@ main() {
     autoupdate_check_async 0
 
     local input=""
-    if ! read -r -p "$(printf "${C_ACCENT}User>${C_RESET} ")" input; then
+    if ! read -r -p "$(printf "${C_ACCENT}You>${C_RESET} ")" input; then
       cleanup_exit
     fi
 
